@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, ChurchBranch, UserRole, AccountStatus } from '../types';
 import { StorageService } from './storage';
+import { isSupabaseConfigured, supabase } from './supabase';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -29,12 +30,63 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const profileToUser = (profile: Record<string, unknown>): User => ({
+  id: String(profile.id),
+  fullName: String(profile.full_name),
+  email: String(profile.email),
+  phone: profile.phone ? String(profile.phone) : undefined,
+  role: profile.role as UserRole,
+  requestedRole: profile.requested_role as UserRole,
+  primaryBranch: profile.primary_branch as ChurchBranch,
+  authorizedBranches: (profile.authorized_branches as ChurchBranch[]) || [],
+  status: profile.status as AccountStatus,
+  createdAt: String(profile.created_at),
+  approvedAt: profile.approved_at ? String(profile.approved_at) : undefined,
+  approvedBy: profile.approved_by ? String(profile.approved_by) : undefined
+});
+
+const getSupabaseProfile = async (userId: string): Promise<User | null> => {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+  if (error || !data) return null;
+  return profileToUser(data);
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(() => StorageService.getCurrentUser());
   const [activeBranch, setActiveBranchState] = useState<ChurchBranch>(() => {
     const saved = StorageService.getActiveBranch();
     return saved;
   });
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    let mounted = true;
+    const hydrateSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      if (!data.session) {
+        setCurrentUser(null);
+        return;
+      }
+      const profile = await getSupabaseProfile(data.session.user.id);
+      if (mounted) {
+        setCurrentUser(profile);
+        StorageService.setCurrentUser(profile);
+      }
+    };
+
+    hydrateSession();
+    const { data: listener } = supabase.auth.onAuthStateChange(() => {
+      setTimeout(() => void hydrateSession(), 0);
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     // If user is regular teacher with specific authorized branches, sync active branch
@@ -63,7 +115,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(refreshed);
   };
 
-  const login = async (email: string, _password?: string, rememberMe = true): Promise<{ success: boolean; message?: string; user?: User }> => {
+  const login = async (email: string, password?: string, rememberMe = true): Promise<{ success: boolean; message?: string; user?: User }> => {
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password: password || ''
+      });
+      if (error || !data.user) {
+        return { success: false, message: error?.message || 'Unable to sign in.' };
+      }
+
+      const user = await getSupabaseProfile(data.user.id);
+      if (!user) {
+        return { success: false, message: 'Your account profile has not been created yet. Please contact an administrator.' };
+      }
+      if (user.status === 'pending') {
+        setCurrentUser(user);
+        return { success: false, message: 'Your account is awaiting administrator approval.', user };
+      }
+      if (user.status === 'suspended' || user.status === 'rejected') {
+        return { success: false, message: `This account has been ${user.status}.` };
+      }
+
+      StorageService.setCurrentUser(user);
+      if (rememberMe) StorageService.setRememberedEmail(user.email);
+      setCurrentUser(user);
+      setActiveBranch(user.authorizedBranches.includes(activeBranch) ? activeBranch : user.primaryBranch);
+      return { success: true, user };
+    }
+
     const users = StorageService.getUsers();
     const cleanEmail = email.trim().toLowerCase();
     const user = users.find(u => u.email.toLowerCase() === cleanEmail);
@@ -116,7 +196,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone: string;
     requestedRole: UserRole;
     branch: ChurchBranch;
+    password?: string;
   }): Promise<{ success: boolean; message: string; user?: User }> => {
+    if (isSupabaseConfigured && supabase) {
+      if (!data.password) {
+        return { success: false, message: 'Please create a password for your account.' };
+      }
+
+      const { data: signUpData, error } = await supabase.auth.signUp({
+        email: data.email.trim().toLowerCase(),
+        password: data.password,
+        options: {
+          data: {
+            full_name: data.fullName.trim(),
+            phone: data.phone.trim(),
+            requested_role: data.requestedRole,
+            primary_branch: data.branch
+          }
+        }
+      });
+
+      if (error || !signUpData.user) {
+        return { success: false, message: error?.message || 'Unable to create your account.' };
+      }
+
+      const user = signUpData.session ? await getSupabaseProfile(signUpData.user.id) : null;
+      if (user) {
+        StorageService.setCurrentUser(user);
+        setCurrentUser(user);
+        setActiveBranch(user.primaryBranch);
+      }
+
+      return {
+        success: true,
+        message: user?.role === 'global_admin'
+          ? 'Welcome! Your account has been configured as the initial Global Administrator.'
+          : signUpData.session
+            ? 'Account registration submitted successfully. An administrator must approve your account.'
+            : 'Account created. Check your email to confirm your address, then sign in.'
+      };
+    }
+
     const users = StorageService.getUsers();
     const cleanEmail = data.email.trim().toLowerCase();
 
@@ -190,6 +310,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         type: 'auth'
       });
     }
+    if (isSupabaseConfigured && supabase) void supabase.auth.signOut();
     StorageService.setCurrentUser(null);
     setCurrentUser(null);
   };
