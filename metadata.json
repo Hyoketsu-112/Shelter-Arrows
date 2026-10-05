@@ -1,0 +1,6 @@
+{
+  "name": "The Shelter Junior Church Records",
+  "description": "Modern, secure church management system for managing children, teachers, birthdays, attendance, and branch records across Shelter Junior Church branches.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
