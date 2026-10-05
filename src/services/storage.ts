@@ -846,7 +846,7 @@ export const StorageService = {
     localStorage.setItem(STORAGE_KEYS.CHILDREN, JSON.stringify(children));
   },
 
-  addChild(childData: Omit<Child, 'id' | 'createdAt'>, actorName: string, actorRole: 'admin' | 'teacher'): Child {
+  addChild(childData: Omit<Child, 'id' | 'createdAt'>, actorName: string, actorRole: UserRole): Child {
     const children = this.getChildren();
     const newChild: Child = {
       ...childData,

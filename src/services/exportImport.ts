@@ -28,8 +28,13 @@ export interface ValidatedChildRow {
     notes?: string;
     guardians: GuardianContact[];
   };
-  isValid: boolean;
-  errors: string[];
+  isValid: boolean; // True if can be imported (both complete and incomplete non-empty rows)
+  isComplete: boolean; // True if all 6 standard fields are present
+  canImport: boolean; // True for all non-empty rows
+  isEmpty: boolean; // True only if row has no data at all
+  missingFields: string[]; // List of fields that were missing and filled with defaults
+  warnings: string[]; // Explanatory notes for defaults applied
+  errors: string[]; // Critical fatal issues (only empty rows)
   isDuplicate: boolean;
 }
 
@@ -39,7 +44,7 @@ export interface ParseResult {
   fileName: string;
 }
 
-// Automatic column matching against the church standard 6-column format
+// Automatic column matching against wide variations of church formats
 export function autoDetectColumnMapping(headers: string[]): ColumnMapping {
   const findMatch = (candidates: string[]): string => {
     for (const cand of candidates) {
@@ -54,11 +59,38 @@ export function autoDetectColumnMapping(headers: string[]): ColumnMapping {
 
   return {
     // 1. First Name
-    firstName: findMatch(['firstname', 'first', 'fname', 'childfirstname', 'childfirst']),
+    firstName: findMatch([
+      'firstname',
+      'first',
+      'fname',
+      'childfirstname',
+      'childfirst',
+      'givenname',
+      'christianname',
+      'forename'
+    ]),
     // 2. Last Name
-    lastName: findMatch(['lastname', 'last', 'surname', 'familyname', 'lname', 'childlastname']),
+    lastName: findMatch([
+      'lastname',
+      'last',
+      'surname',
+      'familyname',
+      'lname',
+      'childlastname',
+      'childsurname'
+    ]),
     // 3. Date of Birth
-    dateOfBirth: findMatch(['dateofbirth', 'dob', 'birthdate', 'birthday', 'birth']),
+    dateOfBirth: findMatch([
+      'dateofbirth',
+      'dob',
+      'birthdate',
+      'birthday',
+      'birth',
+      'born',
+      'age',
+      'yearofbirth',
+      'yob'
+    ]),
     // 4. Guardian's phone number
     guardianPhone: findMatch([
       'guardiansphonenumber',
@@ -68,18 +100,51 @@ export function autoDetectColumnMapping(headers: string[]): ColumnMapping {
       'parentphone',
       'phonenumber',
       'phone',
-      'mobile'
+      'mobile',
+      'tel',
+      'telephone',
+      'contact',
+      'cell',
+      'gsm',
+      'parentcontact',
+      'emergencyphone'
     ]),
     // 5. Email
-    guardianEmail: findMatch(['email', 'guardianemail', 'guardiansemail', 'parentemail', 'emailaddress']),
+    guardianEmail: findMatch([
+      'email',
+      'guardianemail',
+      'guardiansemail',
+      'parentemail',
+      'emailaddress',
+      'parentmail',
+      'mail'
+    ]),
     // 6. Home Address
-    homeAddress: findMatch(['homeaddress', 'address', 'residentialaddress', 'residence', 'streetaddress']),
+    homeAddress: findMatch([
+      'homeaddress',
+      'address',
+      'residentialaddress',
+      'residence',
+      'streetaddress',
+      'location',
+      'houseaddress'
+    ]),
     
     // Optional / auxiliary matches
-    fullName: findMatch(['fullname', 'childname', 'name', 'child']),
-    gender: findMatch(['gender', 'sex']),
-    notes: findMatch(['notes', 'specialneeds', 'allergies', 'info', 'comment']),
-    guardianName: findMatch(['guardianname', 'parentname', 'mothername', 'fathername'])
+    fullName: findMatch([
+      'fullname',
+      'childname',
+      'name',
+      'child',
+      'names',
+      'pupil',
+      'member',
+      'student',
+      'kid'
+    ]),
+    gender: findMatch(['gender', 'sex', 'boyorgirl', 'morf']),
+    notes: findMatch(['notes', 'specialneeds', 'allergies', 'info', 'comment', 'comments', 'remarks', 'class', 'grade']),
+    guardianName: findMatch(['guardianname', 'parentname', 'mothername', 'fathername', 'parents', 'guardian', 'parent'])
   };
 }
 
@@ -113,20 +178,51 @@ export async function parseFileToData(file: File): Promise<ParseResult> {
 }
 
 // Normalize and parse dates into YYYY-MM-DD
-export function parseAndValidateDate(val: any): { dateString: string; error?: string } {
-  if (!val) return { dateString: '', error: 'Date of Birth is required' };
+// If missing, unparseable, or incomplete, gracefully supplies a fallback date so the file can be uploaded!
+export function parseAndValidateDate(val: any, defaultYear = 2018): {
+  dateString: string;
+  isDefaulted: boolean;
+  warning?: string;
+} {
+  if (!val || String(val).trim() === '') {
+    return {
+      dateString: `${defaultYear}-01-01`,
+      isDefaulted: true,
+      warning: 'Date of Birth not provided in file (defaulted to 2018-01-01)'
+    };
+  }
 
   let d: Date | null = null;
 
   if (val instanceof Date) {
     d = val;
   } else if (typeof val === 'number') {
-    const parsed = XLSX.SSF.parse_date_code(val);
-    if (parsed) {
-      d = new Date(parsed.y, parsed.m - 1, parsed.d);
+    // If user provided a 4-digit year like 2016
+    if (val >= 1990 && val <= 2030) {
+      d = new Date(val, 0, 1);
+    } else {
+      const parsed = XLSX.SSF.parse_date_code(val);
+      if (parsed) {
+        d = new Date(parsed.y, parsed.m - 1, parsed.d);
+      }
     }
   } else if (typeof val === 'string') {
     const s = val.trim();
+
+    // Handle age notation like "7", "7 yrs", "8 years old"
+    const ageMatch = s.match(/^(\d{1,2})\s*(?:yrs|years|yr|y\.?o\.?)?$/i);
+    if (ageMatch) {
+      const age = parseInt(ageMatch[1], 10);
+      if (age >= 0 && age <= 25) {
+        const estYear = new Date().getFullYear() - age;
+        return {
+          dateString: `${estYear}-01-01`,
+          isDefaulted: false,
+          warning: `Inferred birth year ${estYear} from age "${s}"`
+        };
+      }
+    }
+
     if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(s)) {
       const parts = s.split('-').map(Number);
       d = new Date(parts[0], parts[1] - 1, parts[2]);
@@ -137,6 +233,18 @@ export function parseAndValidateDate(val: any): { dateString: string; error?: st
       } else {
         d = new Date(parts[2], parts[0] - 1, parts[1]);
       }
+    } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(s)) {
+      const parts = s.split('-').map(Number);
+      d = new Date(parts[2], parts[1] - 1, parts[0]);
+    } else if (/^\d{4}$/.test(s)) {
+      const y = parseInt(s, 10);
+      if (y >= 1990 && y <= new Date().getFullYear()) {
+        return {
+          dateString: `${y}-01-01`,
+          isDefaulted: false,
+          warning: `Birth year ${y} provided without specific day`
+        };
+      }
     } else {
       const parsed = Date.parse(s);
       if (!isNaN(parsed)) {
@@ -146,29 +254,31 @@ export function parseAndValidateDate(val: any): { dateString: string; error?: st
   }
 
   if (!d || isNaN(d.getTime())) {
-    return { dateString: '', error: `Invalid date format: "${val}". Expected YYYY-MM-DD` };
+    return {
+      dateString: `${defaultYear}-01-01`,
+      isDefaulted: true,
+      warning: `Unrecognized date format "${val}" (defaulted to ${defaultYear}-01-01)`
+    };
   }
 
   const today = new Date();
   today.setHours(23, 59, 59, 999);
 
   if (d.getTime() > today.getTime()) {
-    return { dateString: '', error: `Birth date cannot be in the future (${d.toISOString().slice(0, 10)})` };
-  }
-
-  const hundredYearsAgo = new Date();
-  hundredYearsAgo.setFullYear(today.getFullYear() - 25);
-  if (d.getTime() < hundredYearsAgo.getTime()) {
-    return { dateString: '', error: `Birth date indicates age over 25 years (${d.toISOString().slice(0, 10)})` };
+    return {
+      dateString: `${defaultYear}-01-01`,
+      isDefaulted: true,
+      warning: `Future birth date (${d.toISOString().slice(0, 10)}) adjusted to ${defaultYear}-01-01`
+    };
   }
 
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
-  return { dateString: `${y}-${m}-${day}` };
+  return { dateString: `${y}-${m}-${day}`, isDefaulted: false };
 }
 
-// Validate each row according to the 6 standard format columns
+// Validate each row - allows files to be uploaded whether complete or incomplete!
 export function validateImportRows(
   rows: Record<string, any>[],
   mapping: ColumnMapping,
@@ -177,92 +287,154 @@ export function validateImportRows(
 ): ValidatedChildRow[] {
   return rows.map((row, index) => {
     const rowNumber = index + 2;
+    const missingFields: string[] = [];
+    const warnings: string[] = [];
     const errors: string[] = [];
 
+    // Check if entire row is blank
+    const rowValues = Object.values(row).map(v => String(v ?? '').trim()).filter(Boolean);
+    const isEmpty = rowValues.length === 0;
+
+    if (isEmpty) {
+      errors.push('Empty row in spreadsheet');
+      return {
+        rowNumber,
+        originalRow: row,
+        parsedData: {
+          fullName: `Empty Row #${rowNumber}`,
+          firstName: '',
+          lastName: '',
+          dateOfBirth: '2018-01-01',
+          gender: 'Male',
+          guardians: []
+        },
+        isValid: false,
+        isComplete: false,
+        canImport: false,
+        isEmpty: true,
+        missingFields: ['All fields'],
+        warnings: [],
+        errors,
+        isDuplicate: false
+      };
+    }
+
     // 1 & 2. First Name and Last Name
-    const firstName = mapping.firstName ? String(row[mapping.firstName] || '').trim() : '';
-    const lastName = mapping.lastName ? String(row[mapping.lastName] || '').trim() : '';
+    let firstName = mapping.firstName ? String(row[mapping.firstName] || '').trim() : '';
+    let lastName = mapping.lastName ? String(row[mapping.lastName] || '').trim() : '';
     const rawFullName = mapping.fullName ? String(row[mapping.fullName] || '').trim() : '';
 
     let resolvedFullName = '';
     if (firstName && lastName) {
       resolvedFullName = `${firstName} ${lastName}`;
-    } else if (firstName) {
-      resolvedFullName = firstName;
-    } else if (lastName) {
-      resolvedFullName = lastName;
     } else if (rawFullName) {
       resolvedFullName = rawFullName;
+      const parts = rawFullName.split(/\s+/);
+      if (!firstName && parts[0]) firstName = parts[0];
+      if (!lastName && parts.length > 1) lastName = parts.slice(1).join(' ');
+    } else if (firstName) {
+      resolvedFullName = firstName;
+      missingFields.push('Last Name');
+      warnings.push('Last name missing; only first name recorded');
+    } else if (lastName) {
+      resolvedFullName = lastName;
+      missingFields.push('First Name');
+      warnings.push('First name missing; recorded under surname');
+    } else {
+      // Look for any string value in the row to use as name
+      const possibleName = rowValues.find(v => v.length >= 2 && !/^\+?\d+$/.test(v) && !v.includes('@'));
+      if (possibleName) {
+        resolvedFullName = possibleName;
+        firstName = possibleName.split(/\s+/)[0] || possibleName;
+        lastName = possibleName.split(/\s+/).slice(1).join(' ');
+        warnings.push(`Inferred name "${resolvedFullName}" from available row data`);
+      } else {
+        resolvedFullName = `Child #${rowNumber}`;
+        firstName = `Child`;
+        lastName = `#${rowNumber}`;
+        missingFields.push('Child Name');
+        warnings.push(`No name found in row; temporary placeholder assigned: Child #${rowNumber}`);
+      }
     }
 
-    if (!resolvedFullName) {
-      errors.push('Missing child First Name or Last Name');
-    }
-
-    // 3. Date of Birth
+    // 3. Date of Birth (Flexible: never rejects, supplies safe default if incomplete)
     const rawDob = mapping.dateOfBirth ? row[mapping.dateOfBirth] : '';
     const dateResult = parseAndValidateDate(rawDob);
-    if (dateResult.error) {
-      errors.push(dateResult.error);
+    if (dateResult.isDefaulted) {
+      missingFields.push('Date of Birth');
+    }
+    if (dateResult.warning) {
+      warnings.push(dateResult.warning);
     }
 
     // 4. Guardian's Phone Number
     const guardianPhone = mapping.guardianPhone ? String(row[mapping.guardianPhone] || '').trim() : '';
+    if (!guardianPhone) {
+      missingFields.push("Guardian Phone");
+    }
 
     // 5. Email
     const guardianEmail = mapping.guardianEmail ? String(row[mapping.guardianEmail] || '').trim() : '';
+    if (!guardianEmail) {
+      missingFields.push('Email');
+    }
 
     // 6. Home Address
     const homeAddress = mapping.homeAddress ? String(row[mapping.homeAddress] || '').trim() : '';
-
-    // Optional Gender
-    const rawGender = mapping.gender ? String(row[mapping.gender] || '').trim().toLowerCase() : '';
-    let gender: 'Male' | 'Female' = 'Male';
-    if (rawGender.startsWith('f') || rawGender === 'girl') {
-      gender = 'Female';
-    } else if (rawGender.startsWith('m') || rawGender === 'boy') {
-      gender = 'Male';
+    if (!homeAddress) {
+      missingFields.push('Home Address');
     }
 
-    // Optional Notes
+    // Gender (Default to Male if not specified)
+    const rawGender = mapping.gender ? String(row[mapping.gender] || '').trim().toLowerCase() : '';
+    let gender: 'Male' | 'Female' = 'Male';
+    if (rawGender.startsWith('f') || rawGender === 'girl' || rawGender === 'female') {
+      gender = 'Female';
+    } else if (rawGender.startsWith('m') || rawGender === 'boy' || rawGender === 'male') {
+      gender = 'Male';
+    } else if (rawGender) {
+      warnings.push(`Unrecognized gender "${rawGender}"; defaulted to Male`);
+    }
+
+    // Notes
     const notes = mapping.notes ? String(row[mapping.notes] || '').trim() : '';
 
     // Guardians Contact Object
     const guardians: GuardianContact[] = [];
-    const guardianName = mapping.guardianName && row[mapping.guardianName]
+    const rawGuardianName = mapping.guardianName && row[mapping.guardianName]
       ? String(row[mapping.guardianName]).trim()
-      : (lastName ? `Guardian (${lastName} Family)` : 'Parent/Guardian');
+      : '';
+    const fallbackGuardianName = rawGuardianName || (lastName ? `${lastName} Family` : 'Parent / Guardian');
 
-    if (guardianPhone || guardianEmail || guardianName) {
-      guardians.push({
-        id: `g-${Date.now()}-${index}`,
-        name: guardianName,
-        phone: guardianPhone,
-        email: guardianEmail || undefined,
-        relationship: 'Parent/Guardian'
-      });
-    }
+    guardians.push({
+      id: `g-${Date.now()}-${index}`,
+      name: fallbackGuardianName,
+      phone: guardianPhone || '',
+      email: guardianEmail || undefined,
+      relationship: 'Parent/Guardian'
+    });
 
     // Duplicate check
     const isDuplicate = existingChildren.some(c =>
       c.branch === targetBranch &&
-      c.fullName.toLowerCase() === resolvedFullName.toLowerCase() &&
-      c.dateOfBirth === dateResult.dateString
+      c.fullName.trim().toLowerCase() === resolvedFullName.trim().toLowerCase()
     );
 
     if (isDuplicate) {
-      errors.push(`Duplicate: Child "${resolvedFullName}" with birth date ${dateResult.dateString} already exists in ${targetBranch}`);
+      warnings.push(`Duplicate: "${resolvedFullName}" is already registered in ${targetBranch}`);
     }
 
-    const isValid = errors.length === 0;
+    const isComplete = missingFields.length === 0;
+    const canImport = !isEmpty;
+    const isValid = canImport; // Allow import whether complete or incomplete!
 
     return {
       rowNumber,
       originalRow: row,
       parsedData: {
         fullName: resolvedFullName,
-        firstName: firstName || resolvedFullName.split(' ')[0] || '',
-        lastName: lastName || resolvedFullName.split(' ').slice(1).join(' ') || '',
+        firstName: firstName || resolvedFullName,
+        lastName: lastName || '',
         dateOfBirth: dateResult.dateString,
         gender,
         homeAddress: homeAddress || undefined,
@@ -270,13 +442,18 @@ export function validateImportRows(
         guardians
       },
       isValid,
+      isComplete,
+      canImport,
+      isEmpty,
+      missingFields,
+      warnings,
       errors,
       isDuplicate
     };
   });
 }
 
-// Generate sample Excel template matching the 6 required columns exactly
+// Generate sample Excel template matching the 6 standard columns
 export function downloadSampleSpreadsheet(format: 'xlsx' | 'csv') {
   const sampleData = [
     {
