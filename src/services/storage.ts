@@ -1,6 +1,7 @@
 import {
   Child,
   User,
+  UserRole,
   ChurchBranch,
   AttendanceRecord,
   ActivityLogItem,
@@ -33,14 +34,27 @@ const SEED_USERS: User[] = [
     id: 'user-admin-1',
     fullName: 'Pastor David Olatunji',
     email: 'pastor.david@theshelter.org',
-    role: 'admin',
-    requestedRole: 'admin',
+    role: 'global_admin',
+    requestedRole: 'global_admin',
     primaryBranch: 'Shelter Okota',
     authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church'],
     status: 'approved',
     createdAt: '2025-01-10T09:00:00Z',
     approvedAt: '2025-01-10T09:00:00Z',
     phone: '+234 803 123 4567',
+  },
+  {
+    id: 'user-global-admin-user',
+    fullName: 'Senior Pastor / Global Admin',
+    email: 'sd0021306@gmail.com',
+    role: 'global_admin',
+    requestedRole: 'global_admin',
+    primaryBranch: 'Shelter Okota',
+    authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church'],
+    status: 'approved',
+    createdAt: '2025-01-01T00:00:00Z',
+    approvedAt: '2025-01-01T00:00:00Z',
+    phone: '+234 800 123 9999',
   },
   {
     id: 'user-admin-2',
@@ -491,15 +505,68 @@ export const StorageService = {
   // --- USERS & AUTH ---
   getUsers(): User[] {
     const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+    let list: User[];
     if (!raw) {
+      list = SEED_USERS;
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
-      return SEED_USERS;
+    } else {
+      try {
+        list = JSON.parse(raw);
+      } catch {
+        list = SEED_USERS;
+      }
     }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return SEED_USERS;
+
+    // Ensure Pastor David and User Email are recognized as Global Admins
+    let modified = false;
+    list = list.map(u => {
+      if (u.email.toLowerCase() === 'pastor.david@theshelter.org' && u.role !== 'global_admin') {
+        modified = true;
+        return {
+          ...u,
+          role: 'global_admin' as UserRole,
+          authorizedBranches: CHURCH_BRANCHES
+        };
+      }
+      return u;
+    });
+
+    const userEmail = 'sd0021306@gmail.com';
+    const foundUser = list.find(u => u.email.toLowerCase() === userEmail);
+    if (!foundUser) {
+      const userAdmin: User = {
+        id: 'user-global-admin-user',
+        fullName: 'Senior Pastor / Global Admin',
+        email: userEmail,
+        role: 'global_admin',
+        requestedRole: 'global_admin',
+        primaryBranch: 'Shelter Okota',
+        authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church'],
+        status: 'approved',
+        createdAt: '2025-01-01T00:00:00Z',
+        approvedAt: '2025-01-01T00:00:00Z',
+        phone: '+234 800 123 9999'
+      };
+      list.unshift(userAdmin);
+      modified = true;
+    } else if (foundUser.role !== 'global_admin') {
+      list = list.map(u => {
+        if (u.email.toLowerCase() === userEmail) {
+          return {
+            ...u,
+            role: 'global_admin' as UserRole,
+            authorizedBranches: CHURCH_BRANCHES
+          };
+        }
+        return u;
+      });
+      modified = true;
     }
+
+    if (modified) {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+    }
+    return list;
   },
 
   saveUsers(users: User[]): void {
@@ -552,13 +619,22 @@ export const StorageService = {
     localStorage.setItem(STORAGE_KEYS.ACTIVE_BRANCH, branch);
   },
 
-  // Count approved admins across entire system (MAX 2)
+  // Count approved branch admins (limit applies to local branch admins)
   getAdminCount(): number {
     const users = this.getUsers();
     return users.filter(u => u.role === 'admin' && u.status === 'approved').length;
   },
 
-  canApproveAsAdmin(userId: string): { allowed: boolean; reason?: string } {
+  // Count approved global admins
+  getGlobalAdminCount(): number {
+    const users = this.getUsers();
+    return users.filter(u => u.role === 'global_admin' && u.status === 'approved').length;
+  },
+
+  canApproveAsAdmin(userId: string, roleToGrant: UserRole = 'admin'): { allowed: boolean; reason?: string } {
+    if (roleToGrant === 'global_admin') {
+      return { allowed: true };
+    }
     const users = this.getUsers();
     const target = users.find(u => u.id === userId);
     if (!target) return { allowed: false, reason: 'User not found' };
@@ -572,7 +648,7 @@ export const StorageService = {
     if (currentAdmins >= 2) {
       return {
         allowed: false,
-        reason: 'Maximum limit of 2 administrators reached across the entire system. You must demote an existing administrator before approving another.'
+        reason: 'Maximum limit of 2 branch administrators reached. Global Admin or existing administrator must adjust roles before adding another branch admin.'
       };
     }
     return { allowed: true };
@@ -582,7 +658,7 @@ export const StorageService = {
     userId: string,
     actorId: string,
     actorName: string,
-    actorRole: 'admin' | 'teacher'
+    actorRole: UserRole
   ): { success: boolean; message: string } {
     if (userId === actorId) {
       return { success: false, message: 'You cannot remove your own account while signed in.' };
@@ -594,10 +670,28 @@ export const StorageService = {
       return { success: false, message: 'Staff member not found.' };
     }
 
-    // Protect last administrator
+    // Only Global Admins can delete another Global Admin
+    if (target.role === 'global_admin') {
+      if (actorRole !== 'global_admin') {
+        return {
+          success: false,
+          message: 'Only a Global Administrator has permission to remove a Global Administrator.'
+        };
+      }
+      const globalCount = users.filter(u => u.role === 'global_admin' && u.status === 'approved').length;
+      if (globalCount <= 1) {
+        return {
+          success: false,
+          message: 'Cannot remove the only remaining Global Administrator. The church must retain at least one Global Admin.'
+        };
+      }
+    }
+
+    // Protect last administrator if not global admin
     if (target.role === 'admin' && target.status === 'approved') {
       const adminCount = this.getAdminCount();
-      if (adminCount <= 1) {
+      const globalCount = this.getGlobalAdminCount();
+      if (adminCount <= 1 && globalCount === 0) {
         return {
           success: false,
           message: 'Cannot remove the only remaining administrator. The church must have at least one active administrator.'

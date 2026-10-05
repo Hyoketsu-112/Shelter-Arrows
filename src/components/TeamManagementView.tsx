@@ -23,7 +23,7 @@ import { StorageService } from '../services/storage';
 import { User, ChurchBranch, UserRole, AccountStatus, CHURCH_BRANCHES } from '../types';
 
 export const TeamManagementView: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, isGlobalAdmin } = useAuth();
   
   const [users, setUsers] = useState<User[]>(() => StorageService.getUsers());
   const [tab, setTab] = useState<'staff' | 'pending'>('staff');
@@ -33,6 +33,7 @@ export const TeamManagementView: React.FC = () => {
   const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const adminCount = StorageService.getAdminCount();
+  const globalAdminCount = StorageService.getGlobalAdminCount();
   const isAdminLimitReached = adminCount >= 2;
 
   const refreshUsers = () => {
@@ -49,9 +50,9 @@ export const TeamManagementView: React.FC = () => {
     const roleToGrant = approvedRole || user.requestedRole;
 
     if (roleToGrant === 'admin') {
-      const check = StorageService.canApproveAsAdmin(user.id);
+      const check = StorageService.canApproveAsAdmin(user.id, roleToGrant);
       if (!check.allowed) {
-        showFeedback(check.reason || 'Maximum of 2 administrators reached across the system.', 'error');
+        showFeedback(check.reason || 'Maximum of 2 branch administrators reached across the system.', 'error');
         return;
       }
     }
@@ -63,6 +64,7 @@ export const TeamManagementView: React.FC = () => {
           ...u,
           status: 'approved' as AccountStatus,
           role: roleToGrant,
+          authorizedBranches: roleToGrant === 'global_admin' ? CHURCH_BRANCHES : u.authorizedBranches,
           approvedAt: new Date().toISOString(),
           approvedBy: currentUser?.id
         };
@@ -73,7 +75,7 @@ export const TeamManagementView: React.FC = () => {
     StorageService.saveUsers(updated);
     StorageService.logActivity({
       userName: currentUser?.fullName || 'Admin',
-      userRole: 'admin',
+      userRole: currentUser?.role || 'admin',
       branch: user.primaryBranch,
       action: 'Staff Account Approved',
       details: `Approved ${user.fullName} as ${roleToGrant} for ${user.primaryBranch}`,
@@ -136,28 +138,55 @@ export const TeamManagementView: React.FC = () => {
   // Change Role
   const handleChangeRole = (user: User, newRole: UserRole) => {
     if (newRole === 'admin') {
-      const check = StorageService.canApproveAsAdmin(user.id);
+      const check = StorageService.canApproveAsAdmin(user.id, newRole);
       if (!check.allowed) {
-        showFeedback(check.reason || 'Maximum of 2 administrators reached across the system.', 'error');
+        showFeedback(check.reason || 'Maximum of 2 branch administrators reached.', 'error');
         return;
       }
     }
 
-    // If demoting an admin, ensure at least 1 admin remains
+    // Only Global Admins can grant or modify Global Admin role
+    if (newRole === 'global_admin' && !isGlobalAdmin) {
+      showFeedback('Only an existing Global Administrator can appoint a Global Administrator.', 'error');
+      return;
+    }
+
+    // Protect primary global admin from demotion by non-global admin
+    if (user.role === 'global_admin' && newRole !== 'global_admin') {
+      if (!isGlobalAdmin) {
+        showFeedback('Only a Global Administrator can modify Global Admin roles.', 'error');
+        return;
+      }
+      if (globalAdminCount <= 1) {
+        showFeedback('The system must maintain at least 1 Global Administrator.', 'error');
+        return;
+      }
+    }
+
+    // If demoting a branch admin, ensure at least 1 admin or global admin remains
     if (user.role === 'admin' && newRole === 'teacher') {
-      if (adminCount <= 1) {
+      if (adminCount <= 1 && globalAdminCount === 0) {
         showFeedback('The system must maintain at least 1 active administrator.', 'error');
         return;
       }
     }
 
     const all = StorageService.getUsers();
-    const updated = all.map(u => (u.id === user.id ? { ...u, role: newRole } : u));
+    const updated = all.map(u => {
+      if (u.id === user.id) {
+        return {
+          ...u,
+          role: newRole,
+          authorizedBranches: newRole === 'global_admin' ? CHURCH_BRANCHES : u.authorizedBranches
+        };
+      }
+      return u;
+    });
     StorageService.saveUsers(updated);
 
     StorageService.logActivity({
       userName: currentUser?.fullName || 'Admin',
-      userRole: 'admin',
+      userRole: currentUser?.role || 'admin',
       branch: user.primaryBranch,
       action: 'Staff Role Changed',
       details: `Changed ${user.fullName} role to ${newRole}`,
@@ -387,11 +416,13 @@ export const TeamManagementView: React.FC = () => {
 
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          staff.role === 'admin'
-                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                            : 'bg-slate-100 text-slate-700'
+                          staff.role === 'global_admin'
+                            ? 'bg-amber-500 text-white shadow-2xs'
+                            : staff.role === 'admin'
+                              ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                              : 'bg-slate-100 text-slate-700'
                         }`}>
-                          {staff.role}
+                          {staff.role === 'global_admin' ? '🌐 Global Admin' : staff.role === 'admin' ? 'Branch Admin' : 'Teacher'}
                         </span>
                       </td>
 
@@ -602,6 +633,7 @@ export const TeamManagementView: React.FC = () => {
         <ChangeRoleModal
           user={selectedUserForRole}
           adminCount={adminCount}
+          isGlobalAdmin={isGlobalAdmin}
           onClose={() => setSelectedUserForRole(null)}
           onSave={newRole => handleChangeRole(selectedUserForRole, newRole)}
         />
@@ -688,9 +720,10 @@ const BranchAccessModal: React.FC<{
 const ChangeRoleModal: React.FC<{
   user: User;
   adminCount: number;
+  isGlobalAdmin: boolean;
   onClose: () => void;
   onSave: (role: UserRole) => void;
-}> = ({ user, adminCount, onClose, onSave }) => {
+}> = ({ user, adminCount, isGlobalAdmin, onClose, onSave }) => {
   const [role, setRole] = useState<UserRole>(user.role);
   const isCurrentlyAdmin = user.role === 'admin';
   const isAdminLimitReached = adminCount >= 2;
@@ -707,6 +740,55 @@ const ChangeRoleModal: React.FC<{
         </p>
 
         <div className="space-y-3 mb-6">
+          {/* Global Admin Option (Visible & selectable by Global Admins) */}
+          {isGlobalAdmin && (
+            <button
+              type="button"
+              onClick={() => setRole('global_admin')}
+              className={`w-full p-3 rounded-xl border text-left text-xs transition-all ${
+                role === 'global_admin'
+                  ? 'border-amber-500 bg-amber-50/70 text-amber-950 font-bold ring-2 ring-amber-400'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+              }`}
+            >
+              <div className="font-bold flex items-center justify-between">
+                <span className="flex items-center space-x-1.5 text-amber-900 font-extrabold">
+                  <span>🌐 Global Administrator</span>
+                  <span className="text-[9px] bg-amber-500 text-white px-1.5 py-0.2 rounded-full uppercase">
+                    Supreme
+                  </span>
+                </span>
+                {role === 'global_admin' && <Check className="w-3.5 h-3.5 text-amber-600" />}
+              </div>
+              <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                Executive oversight across ALL church branches, multi-branch consolidated summaries, audit governance, and staff appointment authority.
+              </p>
+            </button>
+          )}
+
+          <button
+            type="button"
+            disabled={cannotBecomeAdmin}
+            onClick={() => setRole('admin')}
+            className={`w-full p-3 rounded-xl border text-left text-xs transition-all ${
+              cannotBecomeAdmin
+                ? 'opacity-40 cursor-not-allowed bg-slate-100 border-slate-200'
+                : role === 'admin'
+                  ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 font-bold ring-1 ring-indigo-500'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+            }`}
+          >
+            <div className="font-bold flex items-center justify-between">
+              <span>Branch Administrator</span>
+              {role === 'admin' && <Check className="w-3.5 h-3.5 text-indigo-600" />}
+            </div>
+            <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+              {cannotBecomeAdmin
+                ? 'Maximum 2 branch administrators reached across the system.'
+                : 'Full access: view complete guardian phone/email, add/edit/delete children, import spreadsheets, and manage team accounts.'}
+            </p>
+          </button>
+
           <button
             type="button"
             onClick={() => setRole('teacher')}
@@ -722,29 +804,6 @@ const ChangeRoleModal: React.FC<{
             </div>
             <p className="text-[10px] text-slate-500 font-normal mt-0.5">
               Can view child names, birthdays, search register, and take branch attendance. Cannot view sensitive parent contact details.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            disabled={cannotBecomeAdmin}
-            onClick={() => setRole('admin')}
-            className={`w-full p-3 rounded-xl border text-left text-xs transition-all ${
-              cannotBecomeAdmin
-                ? 'opacity-40 cursor-not-allowed bg-slate-100 border-slate-200'
-                : role === 'admin'
-                  ? 'border-amber-500 bg-amber-50/50 text-amber-950 font-bold ring-1 ring-amber-500'
-                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-            }`}
-          >
-            <div className="font-bold flex items-center justify-between">
-              <span>Administrator</span>
-              {role === 'admin' && <Check className="w-3.5 h-3.5 text-amber-600" />}
-            </div>
-            <p className="text-[10px] text-slate-500 font-normal mt-0.5">
-              {cannotBecomeAdmin
-                ? 'Maximum 2 administrators limit reached across the system.'
-                : 'Full access: view complete guardian phone/email, add/edit/delete children, import spreadsheets, and manage team accounts.'}
             </p>
           </button>
         </div>

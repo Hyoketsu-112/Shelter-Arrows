@@ -150,9 +150,13 @@ export const AccountView: React.FC = () => {
               <div className="flex justify-between items-center">
                 <span className="text-slate-400">Access Role:</span>
                 <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] uppercase ${
-                  isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'
+                  currentUser?.role === 'global_admin'
+                    ? 'bg-amber-500 text-white shadow-2xs'
+                    : isAdmin
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-indigo-100 text-indigo-800'
                 }`}>
-                  {currentUser?.role}
+                  {currentUser?.role === 'global_admin' ? '🌐 Global Administrator' : currentUser?.role === 'admin' ? 'Branch Administrator' : 'Teacher'}
                 </span>
               </div>
 

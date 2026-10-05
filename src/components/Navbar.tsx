@@ -24,7 +24,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onNavigate, currentView }) => {
-  const { currentUser, activeBranch, logout, isAdmin, isApproved, login } = useAuth();
+  const { currentUser, activeBranch, logout, isAdmin, isGlobalAdmin, isApproved, login } = useAuth();
   const [showBirthdayMenu, setShowBirthdayMenu] = useState(false);
 
   // Calculate upcoming birthdays for current branch
@@ -148,7 +148,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate, currentView }) => {
                   className="cursor-pointer flex items-center space-x-2 p-1 rounded-lg hover:bg-slate-100 transition-colors"
                 >
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
-                    isAdmin ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                    isGlobalAdmin
+                      ? 'bg-amber-500 text-white shadow-xs ring-2 ring-amber-300'
+                      : isAdmin
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                        : 'bg-indigo-100 text-indigo-800 border border-indigo-200'
                   }`}>
                     {currentUser.fullName.charAt(0)}
                   </div>
@@ -158,9 +162,13 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate, currentView }) => {
                     </p>
                     <div className="flex items-center space-x-1">
                       <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded-sm ${
-                        isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                        isGlobalAdmin
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold'
+                          : isAdmin
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-600'
                       }`}>
-                        {isAdmin ? 'Admin' : currentUser.role === 'admin' ? 'Pending Admin' : 'Teacher'}
+                        {isGlobalAdmin ? '🌐 Global Admin' : isAdmin ? 'Branch Admin' : currentUser.role === 'admin' ? 'Pending Admin' : 'Teacher'}
                       </span>
                     </div>
                   </div>

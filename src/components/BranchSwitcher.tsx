@@ -16,7 +16,7 @@ import { StorageService } from '../services/storage';
 import { CHURCH_BRANCHES, ChurchBranch } from '../types';
 
 export const BranchSwitcher: React.FC = () => {
-  const { currentUser, activeBranch, setActiveBranch, isAdmin } = useAuth();
+  const { currentUser, activeBranch, setActiveBranch, isAdmin, isGlobalAdmin } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [switchFeedback, setSwitchFeedback] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -32,9 +32,9 @@ export const BranchSwitcher: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Determine accessible branches for current user
+  // Determine accessible branches for current user (Global Admin & Admin have access to all branches)
   const accessibleBranches: ChurchBranch[] = currentUser
-    ? (currentUser.role === 'admin'
+    ? (currentUser.role === 'admin' || currentUser.role === 'global_admin'
         ? CHURCH_BRANCHES
         : currentUser.authorizedBranches && currentUser.authorizedBranches.length > 0
           ? currentUser.authorizedBranches
@@ -157,11 +157,15 @@ export const BranchSwitcher: React.FC = () => {
                 You have permission for {accessibleBranches.length} of {CHURCH_BRANCHES.length} branches
               </p>
             </div>
-            {isAdmin && (
+            {isGlobalAdmin ? (
+              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white shadow-2xs">
+                🌐 Global Admin
+              </span>
+            ) : isAdmin ? (
               <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
                 Admin (All)
               </span>
-            )}
+            ) : null}
           </div>
 
           {/* Branches List */}

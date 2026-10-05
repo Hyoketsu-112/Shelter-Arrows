@@ -7,6 +7,7 @@ interface AuthContextType {
   activeBranch: ChurchBranch;
   isAuthenticated: boolean;
   isAdmin: boolean;
+  isGlobalAdmin: boolean;
   isApproved: boolean;
   setActiveBranch: (branch: ChurchBranch) => void;
   login: (email: string, password?: string, rememberMe?: boolean) => Promise<{ success: boolean; message?: string; user?: User }>;
@@ -36,8 +37,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     // If user is regular teacher with specific authorized branches, sync active branch
     if (currentUser) {
-      if (currentUser.role === 'admin') {
-        // Admins have universal access to all branches
+      if (currentUser.role === 'admin' || currentUser.role === 'global_admin') {
+        // Admins and Global Admins have universal access to all branches
         return;
       }
       if (currentUser.authorizedBranches && currentUser.authorizedBranches.length > 0) {
@@ -221,7 +222,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isAuthenticated = !!currentUser;
   const isApproved = currentUser?.status === 'approved';
-  const isAdmin = currentUser?.role === 'admin' && isApproved;
+  const isGlobalAdmin = currentUser?.role === 'global_admin' && isApproved;
+  const isAdmin = (currentUser?.role === 'admin' || currentUser?.role === 'global_admin') && isApproved;
 
   return (
     <AuthContext.Provider
@@ -230,6 +232,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeBranch,
         isAuthenticated,
         isAdmin,
+        isGlobalAdmin,
         isApproved,
         setActiveBranch,
         login,

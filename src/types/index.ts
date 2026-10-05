@@ -6,7 +6,7 @@ export const CHURCH_BRANCHES: ChurchBranch[] = [
   'Anthony Church'
 ];
 
-export type UserRole = 'admin' | 'teacher';
+export type UserRole = 'global_admin' | 'admin' | 'teacher';
 
 export type AccountStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 

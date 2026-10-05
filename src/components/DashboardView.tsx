@@ -13,12 +13,14 @@ import {
   UserPlus,
   FileSpreadsheet,
   AlertCircle,
-  PartyPopper
+  PartyPopper,
+  Globe,
+  Building2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '../services/authContext';
 import { StorageService, getBirthdayInfo } from '../services/storage';
-import { Child } from '../types';
+import { Child, CHURCH_BRANCHES, ChurchBranch } from '../types';
 import { QuickActionsFloatingButton } from './QuickActionsFloatingButton';
 
 interface DashboardViewProps {
@@ -32,13 +34,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenAddChild,
   onOpenImport
 }) => {
-  const { activeBranch, isAdmin, currentUser } = useAuth();
+  const { activeBranch, setActiveBranch, isAdmin, isGlobalAdmin, currentUser } = useAuth();
 
   const allChildren = StorageService.getChildren();
   const branchChildren = allChildren.filter(c => c.branch === activeBranch);
   const attendanceRecords = StorageService.getAttendance().filter(a => a.branch === activeBranch);
   const activityLogs = StorageService.getActivity().filter(
-    act => act.branch === activeBranch || currentUser?.role === 'admin'
+    act => act.branch === activeBranch || currentUser?.role === 'admin' || currentUser?.role === 'global_admin'
   );
 
   const birthdayInfos = branchChildren.map(getBirthdayInfo);
@@ -49,6 +51,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const totalBoys = branchChildren.filter(c => c.gender === 'Male').length;
   const totalGirls = branchChildren.filter(c => c.gender === 'Female').length;
+
+  // Global Cross-Branch Aggregates for Global Admin
+  const globalTotalChildren = allChildren.length;
+  const globalWeekBirthdays = allChildren.map(getBirthdayInfo).filter(b => b.isWithin7Days);
+  const branchBreakdown = CHURCH_BRANCHES.map(b => ({
+    branch: b,
+    count: allChildren.filter(c => c.branch === b).length,
+    todayBirthdays: allChildren.filter(c => c.branch === b).map(getBirthdayInfo).filter(x => x.isToday).length
+  }));
 
   const triggerConfetti = () => {
     confetti({
@@ -69,6 +80,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-white/10 text-white text-xs font-medium backdrop-blur-xs mb-2">
               <MapPin className="w-3.5 h-3.5 text-amber-400" />
               <span>Current Branch: <strong>{activeBranch}</strong></span>
+              {isGlobalAdmin && (
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 ml-1">
+                  🌐 Global Admin
+                </span>
+              )}
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
               Junior Church Records Portal
@@ -98,6 +114,87 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* GLOBAL ADMIN MULTI-BRANCH EXECUTIVE OVERVIEW */}
+      {isGlobalAdmin && (
+        <div className="bg-white rounded-2xl p-5 border-2 border-amber-300 shadow-md space-y-4 animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-xs">
+                <Globe className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    Global Church Multi-Branch Oversight
+                  </h3>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                    🌐 Global Jurisdiction
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Consolidated metrics and 1-click branch switching across all {CHURCH_BRANCHES.length} church branches.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3 text-xs font-semibold">
+              <div className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-slate-500">All-Branches Total: </span>
+                <span className="text-slate-900 font-bold">{globalTotalChildren} Children</span>
+              </div>
+              <div className="px-3 py-1.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-900">
+                <span>Week Birthdays: </span>
+                <span className="font-bold">{globalWeekBirthdays.length} Celebrants</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 3 Branches Quick Navigation Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {branchBreakdown.map(item => {
+              const isCurrent = item.branch === activeBranch;
+              return (
+                <div
+                  key={item.branch}
+                  className={`p-3.5 rounded-xl border transition-all flex items-center justify-between ${
+                    isCurrent
+                      ? 'border-indigo-600 bg-indigo-50/50 shadow-xs ring-1 ring-indigo-500'
+                      : 'border-slate-200 hover:border-slate-300 bg-slate-50/60'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center space-x-1.5">
+                      <Building2 className={`w-4 h-4 ${isCurrent ? 'text-indigo-600' : 'text-slate-400'}`} />
+                      <span className="font-bold text-xs text-slate-900">{item.branch}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1 flex items-center space-x-2">
+                      <span>{item.count} Registered</span>
+                      {item.todayBirthdays > 0 && (
+                        <span className="text-amber-600 font-bold">• {item.todayBirthdays} Birthday Today!</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {isCurrent ? (
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-600 text-white">
+                      Active
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setActiveBranch(item.branch)}
+                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold transition-colors"
+                    >
+                      Switch →
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Birthday Celebration Banner if Today has Birthdays */}
       {todayBirthdays.length > 0 && (
