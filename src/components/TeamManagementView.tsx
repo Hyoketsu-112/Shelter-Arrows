@@ -16,7 +16,8 @@ import {
   Check,
   X,
   Lock,
-  Trash2
+  Trash2,
+  Crown
 } from 'lucide-react';
 import { useAuth } from '../services/authContext';
 import { StorageService } from '../services/storage';
@@ -145,8 +146,8 @@ export const TeamManagementView: React.FC = () => {
       }
     }
 
-    // Only Global Admins can grant or modify Global Admin role
-    if (newRole === 'global_admin' && !isGlobalAdmin) {
+    // Only Global Admins can grant or modify Global Admin role (unless there is no global admin or only 1 user)
+    if (newRole === 'global_admin' && !isGlobalAdmin && globalAdminCount > 0 && users.length > 1) {
       showFeedback('Only an existing Global Administrator can appoint a Global Administrator.', 'error');
       return;
     }
@@ -314,6 +315,43 @@ export const TeamManagementView: React.FC = () => {
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
           )}
           <span className="font-semibold">{feedbackMsg.text}</span>
+        </div>
+      )}
+
+      {/* NO GLOBAL ADMIN OR SOLE USER BANNER */}
+      {(globalAdminCount === 0 || users.length === 1) && (
+        <div className="p-5 rounded-2xl border border-amber-300 bg-gradient-to-r from-amber-500/10 via-amber-100/50 to-orange-50 text-amber-950 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Crown className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm sm:text-base text-amber-950 flex items-center space-x-2">
+                  <span>{users.length === 1 ? 'Sole User Setup' : 'Global Administrator Required'}</span>
+                  <span className="text-[10px] font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">Executive Access</span>
+                </h3>
+                <p className="text-xs text-amber-800 mt-0.5 max-w-2xl leading-relaxed">
+                  {users.length === 1
+                    ? `You currently have 1 user (${users[0].fullName}) in the church register. Make this user a Global Administrator to unlock consolidated oversight across Shelter Okota, Community Church, and Anthony Church.`
+                    : 'The church register currently has no assigned Global Administrator. Any administrator can appoint a Global Admin to activate multi-branch governance.'}
+                </p>
+              </div>
+            </div>
+
+            {users.length === 1 && users[0].role !== 'global_admin' && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleChangeRole(users[0], 'global_admin');
+                }}
+                className="px-4 py-2.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-bold rounded-xl shadow-xs transition-colors shrink-0 flex items-center space-x-2 self-start sm:self-auto"
+              >
+                <Crown className="w-4 h-4 text-amber-200" />
+                <span>Appoint {users[0].fullName} as Global Admin</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -634,6 +672,7 @@ export const TeamManagementView: React.FC = () => {
           user={selectedUserForRole}
           adminCount={adminCount}
           isGlobalAdmin={isGlobalAdmin}
+          canAppointGlobalAdmin={isGlobalAdmin || globalAdminCount === 0 || users.length <= 1}
           onClose={() => setSelectedUserForRole(null)}
           onSave={newRole => handleChangeRole(selectedUserForRole, newRole)}
         />
@@ -721,9 +760,10 @@ const ChangeRoleModal: React.FC<{
   user: User;
   adminCount: number;
   isGlobalAdmin: boolean;
+  canAppointGlobalAdmin?: boolean;
   onClose: () => void;
   onSave: (role: UserRole) => void;
-}> = ({ user, adminCount, isGlobalAdmin, onClose, onSave }) => {
+}> = ({ user, adminCount, isGlobalAdmin, canAppointGlobalAdmin, onClose, onSave }) => {
   const [role, setRole] = useState<UserRole>(user.role);
   const isCurrentlyAdmin = user.role === 'admin';
   const isAdminLimitReached = adminCount >= 2;
@@ -740,8 +780,8 @@ const ChangeRoleModal: React.FC<{
         </p>
 
         <div className="space-y-3 mb-6">
-          {/* Global Admin Option (Visible & selectable by Global Admins) */}
-          {isGlobalAdmin && (
+          {/* Global Admin Option (Visible & selectable by Global Admins or when 0 global admins / sole user) */}
+          {(isGlobalAdmin || canAppointGlobalAdmin) && (
             <button
               type="button"
               onClick={() => setRole('global_admin')}

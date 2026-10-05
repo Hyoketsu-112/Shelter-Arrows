@@ -531,36 +531,48 @@ export const StorageService = {
       return u;
     });
 
+    const rawDeleted = localStorage.getItem('shelter_jc_deleted_users');
+    let deletedList: string[] = [];
+    try {
+      deletedList = rawDeleted ? JSON.parse(rawDeleted) : [];
+    } catch {
+      deletedList = [];
+    }
+
     const userEmail = 'sd0021306@gmail.com';
-    const foundUser = list.find(u => u.email.toLowerCase() === userEmail);
-    if (!foundUser) {
-      const userAdmin: User = {
-        id: 'user-global-admin-user',
-        fullName: 'Senior Pastor / Global Admin',
-        email: userEmail,
-        role: 'global_admin',
-        requestedRole: 'global_admin',
-        primaryBranch: 'Shelter Okota',
-        authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church'],
-        status: 'approved',
-        createdAt: '2025-01-01T00:00:00Z',
-        approvedAt: '2025-01-01T00:00:00Z',
-        phone: '+234 800 123 9999'
-      };
-      list.unshift(userAdmin);
-      modified = true;
-    } else if (foundUser.role !== 'global_admin') {
-      list = list.map(u => {
-        if (u.email.toLowerCase() === userEmail) {
-          return {
-            ...u,
-            role: 'global_admin' as UserRole,
-            authorizedBranches: CHURCH_BRANCHES
-          };
-        }
-        return u;
-      });
-      modified = true;
+    const isExplicitlyDeleted = deletedList.includes(userEmail.toLowerCase());
+
+    if (!isExplicitlyDeleted) {
+      const foundUser = list.find(u => u.email.toLowerCase() === userEmail);
+      if (!foundUser) {
+        const userAdmin: User = {
+          id: 'user-global-admin-user',
+          fullName: 'Senior Pastor / Global Admin',
+          email: userEmail,
+          role: 'global_admin',
+          requestedRole: 'global_admin',
+          primaryBranch: 'Shelter Okota',
+          authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church'],
+          status: 'approved',
+          createdAt: '2025-01-01T00:00:00Z',
+          approvedAt: '2025-01-01T00:00:00Z',
+          phone: '+234 800 123 9999'
+        };
+        list.unshift(userAdmin);
+        modified = true;
+      } else if (foundUser.role !== 'global_admin') {
+        list = list.map(u => {
+          if (u.email.toLowerCase() === userEmail) {
+            return {
+              ...u,
+              role: 'global_admin' as UserRole,
+              authorizedBranches: CHURCH_BRANCHES
+            };
+          }
+          return u;
+        });
+        modified = true;
+      }
     }
 
     if (modified) {
@@ -654,6 +666,47 @@ export const StorageService = {
     return { allowed: true };
   },
 
+  makeUserGlobalAdmin(userId: string): { success: boolean; message: string; user?: User } {
+    const users = this.getUsers();
+    const target = users.find(u => u.id === userId);
+    if (!target) {
+      return { success: false, message: 'User not found.' };
+    }
+
+    const updatedUser: User = {
+      ...target,
+      role: 'global_admin',
+      status: 'approved',
+      approvedAt: target.approvedAt || new Date().toISOString(),
+      authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church']
+    };
+
+    const updatedList = users.map(u => u.id === userId ? updatedUser : u);
+    this.saveUsers(updatedList);
+
+    const current = this.getCurrentUser();
+    if (current && current.id === userId) {
+      this.setCurrentUser(updatedUser);
+    }
+
+    this.logActivity({
+      userName: updatedUser.fullName,
+      userRole: 'global_admin',
+      branch: updatedUser.primaryBranch,
+      action: 'Global Administrator Appointed',
+      details: `${updatedUser.fullName} was appointed as Global Administrator with supreme access across all branches`,
+      targetEntity: updatedUser.fullName,
+      type: 'team',
+      severity: 'warning'
+    });
+
+    return {
+      success: true,
+      message: `Successfully appointed ${updatedUser.fullName} as Global Administrator!`,
+      user: updatedUser
+    };
+  },
+
   deleteUser(
     userId: string,
     actorId: string,
@@ -714,6 +767,65 @@ export const StorageService = {
     });
 
     return { success: true, message: `Successfully removed ${target.fullName} from staff register.` };
+  },
+
+  deleteOwnAccount(userId: string): { success: boolean; message: string } {
+    const users = this.getUsers();
+    const target = users.find(u => u.id === userId);
+    if (!target) {
+      return { success: false, message: 'Account not found.' };
+    }
+
+    // Safety check: protect if literally only 1 administrator exists total across church
+    const totalRemainingAdmins = users.filter(
+      u => (u.role === 'admin' || u.role === 'global_admin') && u.status === 'approved' && u.id !== userId
+    ).length;
+
+    if (totalRemainingAdmins < 1) {
+      return {
+        success: false,
+        message: 'Cannot delete this account because it is the only administrator in the church system. Please appoint or approve another administrator before deleting this account.'
+      };
+    }
+
+    // Mark as deleted to prevent auto-reseed
+    try {
+      const rawDeleted = localStorage.getItem('shelter_jc_deleted_users');
+      const deletedList: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+      if (!deletedList.includes(target.email.toLowerCase())) {
+        deletedList.push(target.email.toLowerCase());
+        localStorage.setItem('shelter_jc_deleted_users', JSON.stringify(deletedList));
+      }
+    } catch {
+      // ignore
+    }
+
+    // Remove user
+    const filtered = users.filter(u => u.id !== userId);
+    this.saveUsers(filtered);
+
+    // If remembered email was this user's email, clear it
+    const remembered = this.getRememberedEmail();
+    if (remembered.toLowerCase() === target.email.toLowerCase()) {
+      this.setRememberedEmail(null);
+    }
+
+    // Clear current user from storage
+    this.setCurrentUser(null);
+
+    // Log the deletion activity
+    this.logActivity({
+      userName: target.fullName,
+      userRole: target.role,
+      branch: target.primaryBranch,
+      action: 'Staff Account Deleted By Self',
+      details: `${target.fullName} (${target.role}) permanently deleted their own account from ${target.primaryBranch}`,
+      targetEntity: target.fullName,
+      type: 'team',
+      severity: 'danger'
+    });
+
+    return { success: true, message: 'Your account has been permanently deleted.' };
   },
 
   // --- CHILDREN ---

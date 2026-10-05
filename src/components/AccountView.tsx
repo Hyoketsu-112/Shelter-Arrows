@@ -11,14 +11,18 @@ import {
   BellRing,
   Laptop,
   Volume2,
-  VolumeX
+  VolumeX,
+  Trash2,
+  AlertTriangle,
+  X,
+  Crown
 } from 'lucide-react';
 import { useAuth } from '../services/authContext';
 import { StorageService } from '../services/storage';
 import { NotificationService, NotificationSettings } from '../services/notificationService';
 
 export const AccountView: React.FC = () => {
-  const { currentUser, logout, isAdmin } = useAuth();
+  const { currentUser, logout, isAdmin, deleteAccount, elevateToGlobalAdmin } = useAuth();
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -26,6 +30,13 @@ export const AccountView: React.FC = () => {
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+  const [elevationSuccess, setElevationSuccess] = useState<string | null>(null);
+
+  // Delete Account State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [confirmEmailInput, setConfirmEmailInput] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Notification Settings
   const [notifSettings, setNotifSettings] = useState<NotificationSettings>(() => NotificationService.getSettings());
@@ -66,6 +77,25 @@ export const AccountView: React.FC = () => {
     setNotifSettings(updated);
     if (nextVal) {
       NotificationService.playBirthdayChime();
+    }
+  };
+
+  const handleDeleteAccountConfirm = async () => {
+    if (!currentUser) return;
+    if (confirmEmailInput.trim().toLowerCase() !== currentUser.email.toLowerCase()) {
+      setDeleteError(`Please type your email address exactly (${currentUser.email}) to confirm.`);
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    const res = await deleteAccount();
+    if (!res.success) {
+      setDeleteError(res.message);
+      setIsDeleting(false);
+    } else {
+      setShowDeleteModal(false);
     }
   };
 
@@ -186,19 +216,68 @@ export const AccountView: React.FC = () => {
             </div>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-slate-100">
+          <div className="mt-6 pt-4 border-t border-slate-100 space-y-2">
             <button
               onClick={logout}
-              className="w-full py-2 px-3 border border-rose-200 text-rose-700 hover:bg-rose-50 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
+              className="w-full py-2 px-3 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Sign Out of Portal</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmEmailInput('');
+                setDeleteError(null);
+                setShowDeleteModal(true);
+              }}
+              className="w-full py-2 px-3 border border-rose-200 text-rose-700 hover:bg-rose-50 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+              <span>Delete My Account</span>
             </button>
           </div>
         </div>
 
         {/* Change Password Form (Right 2 Cols) */}
         <div className="md:col-span-2 space-y-6">
+
+          {elevationSuccess && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 flex items-center space-x-2.5 shadow-xs">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <span className="font-semibold">{elevationSuccess}</span>
+            </div>
+          )}
+
+          {/* Elevate to Global Administrator Card (if not already global admin) */}
+          {currentUser && currentUser.role !== 'global_admin' && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 p-6 rounded-2xl shadow-xs space-y-3">
+              <div className="flex items-center space-x-2 text-amber-950 font-bold text-base">
+                <Crown className="w-5 h-5 text-amber-600" />
+                <span>Executive Privileges: Elevate to Global Administrator</span>
+              </div>
+              <p className="text-xs text-amber-900 leading-relaxed">
+                Appoint this account as <strong>Global Administrator</strong> with supreme authority across all 3 church branches (<em>Shelter Okota</em>, <em>Community Church</em>, and <em>Anthony Church</em>), multi-branch consolidated summaries, and full staff appointment privileges.
+              </p>
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await elevateToGlobalAdmin(currentUser.id);
+                    if (res.success) {
+                      setElevationSuccess('Congratulations! Your account has been elevated to Global Administrator.');
+                      setTimeout(() => setElevationSuccess(null), 5000);
+                    }
+                  }}
+                  className="px-4 py-2.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center space-x-2"
+                >
+                  <Crown className="w-4 h-4 text-amber-200" />
+                  <span>Make Me Global Administrator</span>
+                </button>
+              </div>
+            </div>
+          )}
           
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
             <h3 className="font-bold text-base text-slate-900 mb-1 flex items-center space-x-2">
@@ -423,9 +502,121 @@ export const AccountView: React.FC = () => {
             </div>
           </div>
 
+          {/* Danger Zone: Account Deletion */}
+          <div className="bg-rose-50/60 rounded-2xl border border-rose-200 p-6 shadow-xs space-y-3">
+            <div className="flex items-center space-x-2 text-rose-900 font-bold text-base">
+              <AlertTriangle className="w-5 h-5 text-rose-600" />
+              <span>Danger Zone: Account Deletion</span>
+            </div>
+            <p className="text-xs text-rose-800 leading-relaxed">
+              Permanently delete your staff account and remove your credentials from The Shelter Junior Church database. Historical church attendance logs and child records recorded under your name will be securely preserved for ministry integrity.
+            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmEmailInput('');
+                  setDeleteError(null);
+                  setShowDeleteModal(true);
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete My Account</span>
+              </button>
+            </div>
+          </div>
+
         </div>
 
       </div>
+
+      {/* DELETE ACCOUNT CONFIRMATION MODAL */}
+      {showDeleteModal && currentUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900">
+                    Delete Your Account
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    This action is permanent and cannot be undone
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {deleteError && (
+              <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="py-4 space-y-3">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                <div className="text-slate-500">Account to be deleted:</div>
+                <div className="font-bold text-slate-900">{currentUser.fullName}</div>
+                <div className="font-mono text-slate-600 text-[11px]">{currentUser.email}</div>
+                <div className="text-slate-500 text-[11px]">Role: <span className="font-semibold text-slate-800 capitalize">{currentUser.role.replace('_', ' ')}</span> • Branch: <span className="font-semibold text-slate-800">{currentUser.primaryBranch}</span></div>
+              </div>
+
+              <p className="text-xs text-slate-600 leading-relaxed">
+                By deleting your account, you will immediately lose access to The Shelter Junior Church portal. To confirm, please type your email address <strong className="text-slate-900 select-all font-mono">{currentUser.email}</strong> below:
+              </p>
+
+              <div>
+                <input
+                  type="email"
+                  placeholder={currentUser.email}
+                  value={confirmEmailInput}
+                  onChange={e => setConfirmEmailInput(e.target.value)}
+                  className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 font-mono"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+                className="px-4 py-2 border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAccountConfirm}
+                disabled={isDeleting || confirmEmailInput.trim().toLowerCase() !== currentUser.email.toLowerCase()}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5"
+              >
+                {isDeleting ? (
+                  <span>Deleting...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Permanently Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

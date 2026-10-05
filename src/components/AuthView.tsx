@@ -13,7 +13,8 @@ import {
   Clock,
   Sparkles,
   Lock,
-  ArrowRight
+  ArrowRight,
+  Crown
 } from 'lucide-react';
 import { useAuth } from '../services/authContext';
 import { ChurchLogo } from './ChurchLogo';
@@ -22,7 +23,7 @@ import { StorageService } from '../services/storage';
 import churchLogoImg from '../assets/images/church_logo.jpg';
 
 export const AuthView: React.FC = () => {
-  const { login, register, requestPasswordReset, confirmPasswordReset, currentUser, logout } = useAuth();
+  const { login, register, requestPasswordReset, confirmPasswordReset, currentUser, logout, elevateToGlobalAdmin } = useAuth();
   
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot' | 'reset-code'>('signin');
   const [loading, setLoading] = useState(false);
@@ -188,14 +189,37 @@ export const AuthView: React.FC = () => {
             </div>
           </div>
 
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 mb-6 space-y-2 text-left">
-            <p className="font-semibold text-slate-800">
-              Your registration request has been submitted to the church administration for verification and branch assignment.
-            </p>
-            <p className="text-slate-500">
-              Once authorized by an administrator, you will be able to log in directly to your assigned church branch.
-            </p>
-          </div>
+          {/* If there is no active Global Admin or only 1 user, allow immediate self-activation */}
+          {(StorageService.getUsers().length <= 1 || StorageService.getGlobalAdminCount() === 0) ? (
+            <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950 mb-6 space-y-2 text-left">
+              <div className="font-bold flex items-center space-x-1.5 text-amber-900">
+                <Crown className="w-4 h-4 text-amber-600" />
+                <span>Primary Church Administrator Setup</span>
+              </div>
+              <p className="text-amber-800 leading-relaxed">
+                There is currently no active Global Administrator assigned in this system. As the primary user, you can activate your account as Global Administrator immediately.
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  await elevateToGlobalAdmin(currentUser.id);
+                }}
+                className="w-full mt-2 py-2.5 px-3 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold rounded-xl text-xs shadow-xs transition-all flex items-center justify-center space-x-2"
+              >
+                <Crown className="w-4 h-4 text-amber-200" />
+                <span>Activate as Global Administrator Now</span>
+              </button>
+            </div>
+          ) : (
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 mb-6 space-y-2 text-left">
+              <p className="font-semibold text-slate-800">
+                Your registration request has been submitted to the church administration for verification and branch assignment.
+              </p>
+              <p className="text-slate-500">
+                Once authorized by an administrator, you will be able to log in directly to your assigned church branch.
+              </p>
+            </div>
+          )}
 
           <button
             onClick={logout}

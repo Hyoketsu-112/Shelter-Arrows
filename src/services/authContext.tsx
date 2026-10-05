@@ -23,6 +23,8 @@ interface AuthContextType {
   requestPasswordReset: (email: string) => Promise<{ success: boolean; message: string; tempCode?: string }>;
   confirmPasswordReset: (email: string, code: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   refreshCurrentUser: () => void;
+  deleteAccount: () => Promise<{ success: boolean; message: string }>;
+  elevateToGlobalAdmin: (userId?: string) => Promise<{ success: boolean; message: string; user?: User }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -133,23 +135,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
+    const isFirstOrOnlyUser = users.length === 0 || !users.some(u => u.status === 'approved' && (u.role === 'admin' || u.role === 'global_admin'));
+
     const newUser: User = {
       id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       fullName: data.fullName.trim(),
       email: cleanEmail,
       phone: data.phone.trim(),
-      role: data.requestedRole,
+      role: isFirstOrOnlyUser ? 'global_admin' : data.requestedRole,
       requestedRole: data.requestedRole,
       primaryBranch: data.branch,
-      authorizedBranches: [data.branch],
-      status: 'pending', // Requires administrator approval
+      authorizedBranches: isFirstOrOnlyUser ? ['Shelter Okota', 'Community Church', 'Anthony Church'] : [data.branch],
+      status: isFirstOrOnlyUser ? 'approved' : 'pending', // Auto-approved if first/only user
+      approvedAt: isFirstOrOnlyUser ? new Date().toISOString() : undefined,
       createdAt: new Date().toISOString()
     };
 
     users.push(newUser);
     StorageService.saveUsers(users);
 
-    // Automatically set as current user in pending state
+    // Automatically set as current user
     StorageService.setCurrentUser(newUser);
     setCurrentUser(newUser);
     setActiveBranch(data.branch);
@@ -158,14 +163,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       userName: newUser.fullName,
       userRole: newUser.role,
       branch: newUser.primaryBranch,
-      action: 'Account Request Created',
-      details: `New ${newUser.requestedRole} account requested for ${newUser.primaryBranch}. Awaiting admin approval.`,
+      action: isFirstOrOnlyUser ? 'Global Administrator Initialized' : 'Account Request Created',
+      details: isFirstOrOnlyUser
+        ? `Initial account created and automatically designated as Global Administrator for ${newUser.primaryBranch}.`
+        : `New ${newUser.requestedRole} account requested for ${newUser.primaryBranch}. Awaiting admin approval.`,
       type: 'auth'
     });
 
     return {
       success: true,
-      message: 'Account registration submitted successfully! An administrator must approve your account before full access is granted.',
+      message: isFirstOrOnlyUser
+        ? 'Welcome! As the initial church staff member, your account has been automatically configured as Global Administrator.'
+        : 'Account registration submitted successfully! An administrator must approve your account before full access is granted.',
       user: newUser
     };
   };
@@ -220,6 +229,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  const deleteAccount = async (): Promise<{ success: boolean; message: string }> => {
+    if (!currentUser) {
+      return { success: false, message: 'No active session found.' };
+    }
+    const res = StorageService.deleteOwnAccount(currentUser.id);
+    if (res.success) {
+      setCurrentUser(null);
+    }
+    return res;
+  };
+
+  const elevateToGlobalAdmin = async (userId?: string): Promise<{ success: boolean; message: string; user?: User }> => {
+    const targetId = userId || currentUser?.id;
+    if (!targetId) {
+      return { success: false, message: 'No target user specified.' };
+    }
+    const res = StorageService.makeUserGlobalAdmin(targetId);
+    if (res.success && res.user) {
+      if (!currentUser || currentUser.id === targetId) {
+        setCurrentUser(res.user);
+      }
+    }
+    return res;
+  };
+
   const isAuthenticated = !!currentUser;
   const isApproved = currentUser?.status === 'approved';
   const isGlobalAdmin = currentUser?.role === 'global_admin' && isApproved;
@@ -240,7 +274,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         requestPasswordReset,
         confirmPasswordReset,
-        refreshCurrentUser
+        refreshCurrentUser,
+        deleteAccount,
+        elevateToGlobalAdmin
       }}
     >
       {children}
