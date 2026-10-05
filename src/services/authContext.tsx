@@ -47,9 +47,12 @@ const profileToUser = (profile: Record<string, unknown>): User => ({
 
 const getSupabaseProfile = async (userId: string): Promise<User | null> => {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-  if (error || !data) return null;
-  return profileToUser(data);
+  const profileResult = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+  if (profileResult.data) return profileToUser(profileResult.data);
+
+  const { data: repairedProfile, error: repairError } = await supabase.rpc('ensure_my_profile');
+  if (repairError || !repairedProfile) return null;
+  return profileToUser(repairedProfile);
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
