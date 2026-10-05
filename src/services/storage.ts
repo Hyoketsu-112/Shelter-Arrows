@@ -112,6 +112,8 @@ const SEED_USERS: User[] = [
   }
 ];
 
+const DEMO_USER_IDS = new Set(SEED_USERS.map(user => user.id));
+
 function getSampleBirthday(daysOffset: number, birthYear: number): string {
   const d = new Date();
   d.setDate(d.getDate() + daysOffset);
@@ -507,73 +509,20 @@ export const StorageService = {
     const raw = localStorage.getItem(STORAGE_KEYS.USERS);
     let list: User[];
     if (!raw) {
-      list = SEED_USERS;
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
+      list = [];
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
     } else {
       try {
         list = JSON.parse(raw);
       } catch {
-        list = SEED_USERS;
+        list = [];
       }
     }
 
-    // Ensure Pastor David and User Email are recognized as Global Admins
-    let modified = false;
-    list = list.map(u => {
-      if (u.email.toLowerCase() === 'pastor.david@theshelter.org' && u.role !== 'global_admin') {
-        modified = true;
-        return {
-          ...u,
-          role: 'global_admin' as UserRole,
-          authorizedBranches: CHURCH_BRANCHES
-        };
-      }
-      return u;
-    });
-
-    const rawDeleted = localStorage.getItem('shelter_jc_deleted_users');
-    let deletedList: string[] = [];
-    try {
-      deletedList = rawDeleted ? JSON.parse(rawDeleted) : [];
-    } catch {
-      deletedList = [];
-    }
-
-    const userEmail = 'sd0021306@gmail.com';
-    const isExplicitlyDeleted = deletedList.includes(userEmail.toLowerCase());
-
-    if (!isExplicitlyDeleted) {
-      const foundUser = list.find(u => u.email.toLowerCase() === userEmail);
-      if (!foundUser) {
-        const userAdmin: User = {
-          id: 'user-global-admin-user',
-          fullName: 'Senior Pastor / Global Admin',
-          email: userEmail,
-          role: 'global_admin',
-          requestedRole: 'global_admin',
-          primaryBranch: 'Shelter Okota',
-          authorizedBranches: ['Shelter Okota', 'Community Church', 'Anthony Church'],
-          status: 'approved',
-          createdAt: '2025-01-01T00:00:00Z',
-          approvedAt: '2025-01-01T00:00:00Z',
-          phone: '+234 800 123 9999'
-        };
-        list.unshift(userAdmin);
-        modified = true;
-      } else if (foundUser.role !== 'global_admin') {
-        list = list.map(u => {
-          if (u.email.toLowerCase() === userEmail) {
-            return {
-              ...u,
-              role: 'global_admin' as UserRole,
-              authorizedBranches: CHURCH_BRANCHES
-            };
-          }
-          return u;
-        });
-        modified = true;
-      }
-    }
+    // Remove bundled demo accounts so a new deployment can bootstrap its own admin.
+    const filteredList = list.filter(user => !DEMO_USER_IDS.has(user.id));
+    const modified = filteredList.length !== list.length;
+    list = filteredList;
 
     if (modified) {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
@@ -593,7 +542,7 @@ export const StorageService = {
       // Refresh with latest from database
       const users = this.getUsers();
       const match = users.find(u => u.id === parsed.id);
-      return match || parsed;
+      return match || null;
     } catch {
       return null;
     }
